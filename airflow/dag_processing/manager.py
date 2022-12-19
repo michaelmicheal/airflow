@@ -39,6 +39,7 @@ from typing import Any, NamedTuple, cast
 
 from setproctitle import setproctitle
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import OperationalError
 from tabulate import tabulate
 
 import airflow.models
@@ -595,7 +596,14 @@ class DagFileProcessorManager(LoggingMixin):
             if self.standalone_dag_processor:
                 self._fetch_callbacks(max_callbacks_per_loop)
             self._deactivate_stale_dags()
-            DagWarning.purge_inactive_dag_warnings()
+
+            try:
+                DagWarning.purge_inactive_dag_warnings()
+            except OperationalError:
+                # If the purge query fails, it's not critical to the dag processor
+                # We ignore it so the dag processor manager doesn't exit
+                self.log.error("Failed to purge inactive dag_warnings, ignoring")
+
             refreshed_dag_dir = self._refresh_dag_dir()
 
             self._kill_timed_out_processors()
@@ -603,6 +611,7 @@ class DagFileProcessorManager(LoggingMixin):
             # Generate more file paths to process if we processed all the files
             # already.
             if not self._file_path_queue:
+                DagWarning.purge_inactive_dag_warnings()
                 self.emit_metrics()
                 self.prepare_file_path_queue()
             elif refreshed_dag_dir:
